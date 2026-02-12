@@ -33,7 +33,7 @@ cat = [
 ]
 
 # upload csv
-data = st.file_uploader("Upload any CSV file", type=["csv"])
+data = st.file_uploader("Upload any CSV file", type=["csv","pdf"])
 
 # check if file uploaded
 if data is not None:
@@ -171,3 +171,4 @@ if data is not None:
             st.dataframe(anomaly_df)
         else:
             st.success("No anomalies detected")
+

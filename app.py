@@ -3,67 +3,82 @@ import pandas as pd
 import google.generativeai as genai
 import json
 
-st.title("Expense categorizer") #title
-api_key = st.sidebar.text_input("enter api key",type="password")
+# title
+st.title("Universal CSV Expense Analyzer")
 
-#stop if apikey is not provided
+# taking api key
+api_key = st.sidebar.text_input("enter api key", type="password")
+
+# stop if api key not entered
 if not api_key:
     st.warning("Please enter Gemini API key.")
     st.stop()
 
+# configure gemini
 genai.configure(api_key=api_key)
 
-#loading gemini model
+# loading model
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-#defining categoties which i have
+# category list
 cat = [
     "Travel",
     "Food & drinks",
     "Rent",
     "Shopping",
     "Health",
-    "Invetsment",
-    "Bills"
+    "Investment",
+    "Bills",
+    "Other"
 ]
 
-data = st.file_uploader("Upload .csv file here",type=["csv"])
-#uploading csv file
+# upload csv
+data = st.file_uploader("Upload any CSV file", type=["csv"])
 
-#checking fileis uploaded or not
+# check if file uploaded
 if data is not None:
+
+    # read csv
     df = pd.read_csv(data)
-    # Normalize column names (remove spaces)
-df.columns = df.columns.str.strip()
 
-# Try to detect important columns automatically
-transaction_col = None
-amount_col = None
-category_col = None
+    # remove extra spaces from column names
+    df.columns = df.columns.str.strip()
 
-for col in df.columns:
-    if "transaction" in col.lower() or "description" in col.lower():
-        transaction_col = col
-    if "amount" in col.lower():
-        amount_col = col
-    if "category" in col.lower():
-        category_col = col
+    st.subheader("Raw Data")
+    st.dataframe(df)
 
-if not transaction_col or not amount_col:
-    st.error("Required columns (transaction/description and amount) not found.")
-    st.write("Available columns:", df.columns)
-    st.stop()
+    # find text and numeric columns automatically
+    text_cols = df.select_dtypes(include=["object"]).columns.tolist()
+    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
 
+    # if no numeric column found stop
+    if not numeric_cols:
+        st.error("No numeric column found in this CSV")
+        st.stop()
 
+    # user selects which column is description
+    transaction_col = st.selectbox("Select description column", text_cols)
 
-#running ai
-if st.button("Run"):
+    # user selects which column is amount
+    amount_col = st.selectbox("Select amount column", numeric_cols)
+
+    # cleaning selected columns
+    df[transaction_col] = df[transaction_col].astype(str).str.lower().str.strip()
+    df[amount_col] = pd.to_numeric(df[amount_col], errors="coerce")
+
+    # remove empty rows
+    df = df.dropna(subset=[transaction_col, amount_col])
+
+    # run button
+    if st.button("Run Analysis"):
+
         categories = []
         confidences = []
 
-#loop for each transaction
-        for desc in df["Transaction"]:
+        # loop for each transaction
+        for desc in df[transaction_col]:
 
+            # prompt for gemini
             prompt = f"""
             Categorize this expense into one of these categories:
             {cat}
@@ -76,8 +91,9 @@ if st.button("Run"):
 
             Transaction: "{desc}"
             """
-#response
+
             try:
+                # get response
                 response = model.generate_content(prompt)
                 result = response.text.strip()
 
@@ -86,71 +102,72 @@ if st.button("Run"):
                 category = parsed.get("category", "Other")
                 confidence = parsed.get("confidence", 0.5)
 
+                # if model gives wrong category
                 if category not in cat:
                     category = "Other"
 
             except:
+                # if error happens
                 category = "Other"
                 confidence = 0.5
 
             categories.append(category)
             confidences.append(confidence)
-#prediction
+
+        # add predicted columns
         df["Predicted_Category"] = categories
         df["Confidence"] = confidences
 
+        st.subheader("Categorized Data")
+        st.dataframe(df)
 
-#display categoris
-st.subheader("Categorized Data")
-st.dataframe(df)
+        # ---------------- anomaly detection ----------------
 
+        anomalies = []
 
-#anomaly detection
-anomalies = []
-
-mean = df["Amount"].mean()
-std = df["Amount"].std()
-threshold = mean + (2 * std)
+        mean = df[amount_col].mean()
+        std = df[amount_col].std()
+        threshold = mean + (2 * std)
 
         # high amount detection
-for index, row in df.iterrows():
-            if row["Amount"] > threshold:
+        for index, row in df.iterrows():
+            if row[amount_col] > threshold:
                 anomalies.append({
-                    "Transaction": row["Transaction"],
-                    "Category": row["Category"],
-                    "Amount": row["Amount"],
+                    "Description": row[transaction_col],
+                    "Amount": row[amount_col],
                     "Issue": "High Amount"
                 })
 
         # duplicate detection
-duplicates = df[df.duplicated(subset=["Transaction", "Category", "Amount"], keep=False)]
+        duplicates = df[df.duplicated(subset=[transaction_col, amount_col], keep=False)]
 
-for index, row in duplicates.iterrows():
+        for index, row in duplicates.iterrows():
             anomalies.append({
-                "Transaction": row["Transaction"],
-                "Category": row["Category"],
-                "Amount": row["Amount"],
+                "Description": row[transaction_col],
+                "Amount": row[amount_col],
                 "Issue": "Duplicate Entry"
             })
-#anomalies -> dataframe
-anomaly_df = pd.DataFrame(anomalies)
 
+        anomaly_df = pd.DataFrame(anomalies)
 
-st.subheader("Summary")
+        # ---------------- summary ----------------
 
-total_spending = df["Amount"].sum()
-st.write(f"Total Spending: ₹ {round(total_spending, 2)}")
+        st.subheader("Summary Report")
 
-summary = df.groupby("Predicted_Category")["Amount"].sum()
-st.bar_chart(summary)
+        total = df[amount_col].sum()
+        st.write(f"Total Amount: {round(total, 2)}")
 
-perct = (summary / total_spending) * 100
-st.write("Category Percentage Description")
-st.dataframe(perct.round(2))
+        summary = df.groupby("Predicted_Category")[amount_col].sum()
+        st.bar_chart(summary)
 
-st.subheader("Anomalies")
+        percentage = (summary / total) * 100
+        st.write("Category Percentage")
+        st.dataframe(percentage.round(2))
 
-if len(anomaly_df) > 0:
-    st.dataframe(anomaly_df)
-else:
-    st.success("No anomalies")
+        # show anomalies
+        st.subheader("Anomalies")
+
+        if len(anomaly_df) > 0:
+            st.dataframe(anomaly_df)
+        else:
+            st.success("No anomalies detected")

@@ -33,21 +33,27 @@ data = st.file_uploader("Upload .csv file here",type=["csv"])
 #checking fileis uploaded or not
 if data is not None:
     df = pd.read_csv(data)
+    # Normalize column names (remove spaces)
+df.columns = df.columns.str.strip()
 
-    req_col = ["Transaction", "Category", "Amount"]
+# Try to detect important columns automatically
+transaction_col = None
+amount_col = None
+category_col = None
 
-    for col in req_col:
-        if col not in df.columns:
-            st.error(f"Missing column: {col}")
-            st.stop()
-        
-    st.subheader("Original Data")
-    st.dataframe(df)
-#data processing 
-    df["Transaction"] = df["Transaction"].astype(str).str.lower()
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
-#removing rows with missing val
-    df = df.dropna(subset=["Transaction", "Amount"])
+for col in df.columns:
+    if "transaction" in col.lower() or "description" in col.lower():
+        transaction_col = col
+    if "amount" in col.lower():
+        amount_col = col
+    if "category" in col.lower():
+        category_col = col
+
+if not transaction_col or not amount_col:
+    st.error("Required columns (transaction/description and amount) not found.")
+    st.write("Available columns:", df.columns)
+    st.stop()
+
 
 
 #running ai
